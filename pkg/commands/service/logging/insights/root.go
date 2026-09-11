@@ -40,7 +40,7 @@ type Command struct {
 	// Optional.
 	serviceName      argparser.OptionalServiceNameID
 	domain           argparser.OptionalString
-	domainExactMatch argparser.OptionalString
+	domainExactMatch bool
 	limit            argparser.OptionalInt
 	pops             argparser.OptionalString
 }
@@ -77,7 +77,7 @@ func NewInsightsCommand(parent argparser.Registerer, g *global.Data) *Command {
 		Dst:         &c.serviceName.Value,
 	})
 	c.CmdClause.Flag("domain", "Limit data to the specified request domain").Action(c.domain.Set).StringVar(&c.domain.Value)
-	c.CmdClause.Flag("domain-exact-match", "Treat --domain as an exact match instead of a suffix match [true, false]").Action(c.domainExactMatch.Set).StringVar(&c.domainExactMatch.Value)
+	c.CmdClause.Flag("domain-exact-match", "Treat --domain as an exact match").BoolVar(&c.domainExactMatch)
 	c.CmdClause.Flag("limit", "Maximum number of rows to return (up to 100)").Action(c.limit.Set).IntVar(&c.limit.Value)
 	c.CmdClause.Flag("pops", "Comma-separated list of Fastly POP codes").Action(c.pops.Set).StringVar(&c.pops.Value)
 	c.RegisterFlagBool(c.JSONFlag())
@@ -108,13 +108,8 @@ func (c *Command) Exec(_ io.Reader, out io.Writer) error {
 	if c.domain.WasSet {
 		input.Domain = &c.domain.Value
 	}
-	if c.domainExactMatch.WasSet {
-		domainExactMatch, err := argparser.ConvertBoolFromStringFlag(c.domainExactMatch.Value, "domain-exact-match")
-		if err != nil {
-			c.Globals.ErrLog.Add(err)
-			return err
-		}
-		input.DomainExactMatch = domainExactMatch
+	if c.domainExactMatch {
+		input.DomainExactMatch = fastly.ToPointer(true)
 	}
 	if c.limit.WasSet {
 		input.Limit = &c.limit.Value

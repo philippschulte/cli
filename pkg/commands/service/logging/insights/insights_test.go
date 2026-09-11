@@ -94,14 +94,9 @@ func TestLogInsights(t *testing.T) {
 			},
 		},
 		{
-			Name:      "validate invalid --domain-exact-match value",
-			Args:      fmt.Sprintf("--service-id %s --start %s --end %s --visualization %s --domain-exact-match invalid", testServiceID, testStart, testEnd, visualization),
-			WantError: "'domain-exact-match' flag must be one of the following [true, false]",
-		},
-		{
 			Name: "validate optional request flags",
 			Args: fmt.Sprintf(
-				"--service-id %s --start %s --end %s --visualization %s --domain example.com --domain-exact-match=false --limit 5 --pops IAD,DFW",
+				"--service-id %s --start %s --end %s --visualization %s --domain example.com --domain-exact-match --limit 5 --pops IAD,DFW",
 				testServiceID,
 				testStart,
 				testEnd,
@@ -115,7 +110,7 @@ func TestLogInsights(t *testing.T) {
 		{
 			Name: "validate optional request flags with JSON output",
 			Args: fmt.Sprintf(
-				"--service-id %s --start %s --end %s --visualization %s --domain example.com --domain-exact-match=false --limit 5 --pops IAD,DFW --json",
+				"--service-id %s --start %s --end %s --visualization %s --domain example.com --domain-exact-match --limit 5 --pops IAD,DFW --json",
 				testServiceID,
 				testStart,
 				testEnd,
@@ -126,7 +121,7 @@ func TestLogInsights(t *testing.T) {
 			},
 			WantOutputs: []string{
 				`"domain": "example.com"`,
-				`"domain_exact_match": false`,
+				`"domain_exact_match": true`,
 				`"pops": [`,
 				`"IAD"`,
 				`"DFW"`,
@@ -218,8 +213,8 @@ func getLogInsightsWithOptions(_ context.Context, input *fastly.GetLogInsightsIn
 	if input.Domain == nil || *input.Domain != "example.com" {
 		return nil, fmt.Errorf("expected domain example.com, got %v", input.Domain)
 	}
-	if input.DomainExactMatch == nil || *input.DomainExactMatch {
-		return nil, fmt.Errorf("expected domain exact match false, got %v", input.DomainExactMatch)
+	if input.DomainExactMatch == nil || !*input.DomainExactMatch {
+		return nil, fmt.Errorf("expected domain exact match true, got %v", input.DomainExactMatch)
 	}
 	if input.Limit == nil || *input.Limit != 5 {
 		return nil, fmt.Errorf("expected limit 5, got %v", input.Limit)
@@ -233,7 +228,7 @@ func getLogInsightsWithOptions(_ context.Context, input *fastly.GetLogInsightsIn
 		Meta: &fastly.LogInsightsMeta{
 			Filters: &fastly.LogInsightsFilters{
 				Domain:           fastly.ToPointer("example.com"),
-				DomainExactMatch: fastly.ToPointer(false),
+				DomainExactMatch: fastly.ToPointer(true),
 				End:              fastly.ToPointer(testEnd),
 				Limit:            fastly.ToPointer(5),
 				POPs:             []string{"IAD", "DFW"},
