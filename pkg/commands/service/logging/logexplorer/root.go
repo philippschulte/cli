@@ -47,9 +47,12 @@ type Command struct {
 	// Optional.
 	serviceName argparser.OptionalServiceNameID
 	filters     []string
-	limit       argparser.OptionalInt
-	cursor      argparser.OptionalString
 }
+
+// maxLogExplorerPageSize is the largest page size the Log Explorer API
+// supports; used internally to minimize the number of requests needed to
+// absorb all pages of a result.
+const maxLogExplorerPageSize = 100
 
 // NewLogExplorerCommand returns a usable Log Explorer command registered under the parent.
 func NewLogExplorerCommand(parent argparser.Registerer, g *global.Data) *Command {
@@ -79,8 +82,6 @@ func NewLogExplorerCommand(parent argparser.Registerer, g *global.Data) *Command
 		Dst:         &c.serviceName.Value,
 	})
 	c.CmdClause.Flag("filter", "Filter in FIELD,OPERATOR,VALUE format (repeatable)").StringsVar(&c.filters)
-	c.CmdClause.Flag("limit", "Maximum number of rows to return (up to 100)").Action(c.limit.Set).IntVar(&c.limit.Value)
-	c.CmdClause.Flag("cursor", "Pagination cursor from a previous response").Action(c.cursor.Set).StringVar(&c.cursor.Value)
 	c.RegisterFlagBool(c.JSONFlag())
 
 	return &c
@@ -110,18 +111,32 @@ func (c *Command) Exec(_ io.Reader, out io.Writer) error {
 		Start:     c.start,
 		End:       c.end,
 		Filters:   filters,
-	}
-	if c.limit.WasSet {
-		input.Limit = &c.limit.Value
-	}
-	if c.cursor.WasSet {
-		input.NextCursor = &c.cursor.Value
+		Limit:     fastly.ToPointer(maxLogExplorerPageSize),
 	}
 
-	result, err := c.Globals.APIClient.GetLogRecords(context.TODO(), input)
-	if err != nil {
-		c.Globals.ErrLog.AddWithContext(err, map[string]any{"Service ID": serviceID})
-		return err
+	var records []*fastly.LogRecord
+	var meta *fastly.LogExplorerMeta
+	for {
+		result, err := c.Globals.APIClient.GetLogRecords(context.TODO(), input)
+		if err != nil {
+			c.Globals.ErrLog.AddWithContext(err, map[string]any{"Service ID": serviceID})
+			return err
+		}
+		if result == nil {
+			break
+		}
+		records = append(records, result.Data...)
+		meta = result.Meta
+
+		if meta == nil || meta.NextCursor == nil || *meta.NextCursor == "" {
+			break
+		}
+		input.NextCursor = meta.NextCursor
+	}
+
+	result := &fastly.LogRecordsResponse{
+		Data: records,
+		Meta: meta,
 	}
 
 	if ok, err := c.WriteJSON(out, result); ok {
@@ -181,7 +196,6 @@ func containsLogExplorerOption(options []string, value string) bool {
 func printLogRecords(out io.Writer, result *fastly.LogRecordsResponse) {
 	if result == nil || len(result.Data) == 0 {
 		fmt.Fprintln(out, "No log records found.")
-		printLogExplorerCursor(out, result)
 		return
 	}
 
@@ -204,14 +218,6 @@ func printLogRecords(out io.Writer, result *fastly.LogRecordsResponse) {
 		)
 	}
 	table.Print()
-
-	printLogExplorerCursor(out, result)
-}
-
-func printLogExplorerCursor(out io.Writer, result *fastly.LogRecordsResponse) {
-	if result != nil && result.Meta != nil && result.Meta.NextCursor != nil && *result.Meta.NextCursor != "" {
-		fmt.Fprintf(out, "\nNext cursor: %s\n", *result.Meta.NextCursor)
-	}
 }
 
 func logExplorerString(v *string) string {

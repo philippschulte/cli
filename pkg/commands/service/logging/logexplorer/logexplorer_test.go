@@ -44,7 +44,7 @@ func TestLogExplorer(t *testing.T) {
 			WantError: "error reading service",
 		},
 		{
-			Name: "validate API success",
+			Name: "validate API success absorbs all pages",
 			Args: fmt.Sprintf("--service-id %s --start %s --end %s", testServiceID, testStart, testEnd),
 			API: &mock.API{
 				GetLogRecordsFn: getLogRecordsOK,
@@ -56,7 +56,12 @@ func TestLogExplorer(t *testing.T) {
 				"/health",
 				"200",
 				"IAD",
-				"Next cursor: next-page",
+				"/status",
+				"204",
+				"LHR",
+			},
+			DontWantOutputs: []string{
+				"cursor",
 			},
 		},
 		{
@@ -68,13 +73,17 @@ func TestLogExplorer(t *testing.T) {
 			WantOutputs: []string{
 				`"request_path": "/health"`,
 				`"response_status": 200`,
-				`"next_cursor": "next-page"`,
+				`"request_path": "/status"`,
+				`"response_status": 204`,
+			},
+			DontWantOutputs: []string{
+				"next_cursor",
 			},
 		},
 		{
 			Name: "validate optional request flags",
 			Args: fmt.Sprintf(
-				"--service-id %s --start %s --end %s --filter response_time,gte,0 --filter response_status,in,200,201 --limit 5 --cursor cursor-1",
+				"--service-id %s --start %s --end %s --filter response_time,gte,0 --filter response_status,in,200,201",
 				testServiceID,
 				testStart,
 				testEnd,
@@ -124,6 +133,9 @@ func TestLogExplorer(t *testing.T) {
 	)
 }
 
+// getLogRecordsOK simulates a two-page result: the first call (no cursor)
+// returns a page with a next cursor, and the second call (with that cursor)
+// returns the final page with no further cursor.
 func getLogRecordsOK(_ context.Context, input *fastly.GetLogRecordsInput) (*fastly.LogRecordsResponse, error) {
 	if input.ServiceID != testServiceID {
 		return nil, fmt.Errorf("expected service ID %q, got %q", testServiceID, input.ServiceID)
@@ -134,32 +146,56 @@ func getLogRecordsOK(_ context.Context, input *fastly.GetLogRecordsInput) (*fast
 	if input.End != testEnd {
 		return nil, fmt.Errorf("expected end %q, got %q", testEnd, input.End)
 	}
+	if input.Limit == nil || *input.Limit != 100 {
+		return nil, fmt.Errorf("expected limit 100, got %v", input.Limit)
+	}
+
+	if input.NextCursor == nil {
+		return &fastly.LogRecordsResponse{
+			Data: []*fastly.LogRecord{
+				{
+					Timestamp:      fastly.ToPointer("2026-08-13T14:30:23Z"),
+					RequestMethod:  fastly.ToPointer("GET"),
+					RequestHost:    fastly.ToPointer("example.com"),
+					RequestPath:    fastly.ToPointer("/health"),
+					ResponseStatus: fastly.ToPointer(200),
+					FastlyPOP:      fastly.ToPointer("IAD"),
+					IsCacheHit:     fastly.ToPointer(true),
+					ResponseTime:   fastly.ToPointer(0.093),
+				},
+			},
+			Meta: &fastly.LogExplorerMeta{
+				NextCursor: fastly.ToPointer("cursor-2"),
+			},
+		}, nil
+	}
+
+	if *input.NextCursor != "cursor-2" {
+		return nil, fmt.Errorf("expected next cursor cursor-2, got %q", *input.NextCursor)
+	}
 
 	return &fastly.LogRecordsResponse{
 		Data: []*fastly.LogRecord{
 			{
-				Timestamp:      fastly.ToPointer("2026-08-13T14:30:23Z"),
+				Timestamp:      fastly.ToPointer("2026-08-13T14:35:00Z"),
 				RequestMethod:  fastly.ToPointer("GET"),
 				RequestHost:    fastly.ToPointer("example.com"),
-				RequestPath:    fastly.ToPointer("/health"),
-				ResponseStatus: fastly.ToPointer(200),
-				FastlyPOP:      fastly.ToPointer("IAD"),
-				IsCacheHit:     fastly.ToPointer(true),
-				ResponseTime:   fastly.ToPointer(0.093),
+				RequestPath:    fastly.ToPointer("/status"),
+				ResponseStatus: fastly.ToPointer(204),
+				FastlyPOP:      fastly.ToPointer("LHR"),
+				IsCacheHit:     fastly.ToPointer(false),
+				ResponseTime:   fastly.ToPointer(0.05),
 			},
-		},
-		Meta: &fastly.LogExplorerMeta{
-			NextCursor: fastly.ToPointer("next-page"),
 		},
 	}, nil
 }
 
 func getLogRecordsWithOptions(_ context.Context, input *fastly.GetLogRecordsInput) (*fastly.LogRecordsResponse, error) {
-	if input.Limit == nil || *input.Limit != 5 {
-		return nil, fmt.Errorf("expected limit 5, got %v", input.Limit)
+	if input.Limit == nil || *input.Limit != 100 {
+		return nil, fmt.Errorf("expected limit 100, got %v", input.Limit)
 	}
-	if input.NextCursor == nil || *input.NextCursor != "cursor-1" {
-		return nil, fmt.Errorf("expected next cursor cursor-1, got %v", input.NextCursor)
+	if input.NextCursor != nil {
+		return nil, fmt.Errorf("expected no next cursor on first request, got %v", *input.NextCursor)
 	}
 	if len(input.Filters) != 2 {
 		return nil, fmt.Errorf("expected 2 filters, got %d", len(input.Filters))
